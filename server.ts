@@ -1,7 +1,7 @@
 import express from 'express';
 import TelegramBot from 'node-telegram-bot-api';
 import * as dotenv from 'dotenv';
-import { generateUsernamesWithAI, checkInstagram } from './src/generator.ts';
+import { generateUsernamesWithAI, checkInstagram } from './src/generator.js';
 
 dotenv.config();
 

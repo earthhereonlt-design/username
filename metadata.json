@@ -1,0 +1,6 @@
+{
+  "name": "Minimal Username Bot",
+  "description": "A strict minimal username generator for Telegram.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

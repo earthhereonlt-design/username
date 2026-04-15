@@ -1,12 +1,10 @@
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
-import path from 'path';
 import TelegramBot from 'node-telegram-bot-api';
 import { generateUsernames, checkInstagram } from './src/generator.ts';
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT || 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   // Telegram Bot Setup
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -31,7 +29,6 @@ async function startServer() {
       const usernames = generateUsernames();
       const results = [];
       
-      // Check in small batches to avoid heavy rate limiting
       for (const username of usernames) {
         const result = await checkInstagram(username);
         if (result.available) {
@@ -49,25 +46,10 @@ async function startServer() {
     console.warn('TELEGRAM_BOT_TOKEN not found. Bot functionality disabled.');
   }
 
-  // API Routes
-  app.get('/api/usernames', (req, res) => {
-    res.json(generateUsernames());
+  // Health check endpoint
+  app.get('/', (req, res) => {
+    res.send('Telegram Bot is running.');
   });
-
-  // Vite Middleware for development
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);

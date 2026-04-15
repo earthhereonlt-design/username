@@ -2,8 +2,8 @@
  * Username generation logic based on strict rules.
  */
 
-export const BASES = ['adi', 'aadi'];
-export const EXTENSIONS = ['php', 'js', 'py', 'xp', 'io', 'oi'];
+export const BASES = ['adi', 'aadi', 'aditya', 'dev', 'code', 'root', 'user', 'admin', 'bot', 'api'];
+export const EXTENSIONS = ['php', 'js', 'py', 'xp', 'io', 'oi', 'ts', 'go', 'rs', 'rb', 'sh', 'db', 'web', 'app', 'net', 'org'];
 export const SEPARATORS = ['.', '_'];
 
 export function generateUsernames(): string[] {

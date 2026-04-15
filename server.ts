@@ -1,6 +1,6 @@
 import express from 'express';
 import TelegramBot from 'node-telegram-bot-api';
-import { generateUsernames, checkInstagram } from './src/generator.ts';
+import { generateUsernamesWithAI, checkInstagram } from './src/generator.ts';
 
 async function startServer() {
   const app = express();
@@ -8,43 +8,89 @@ async function startServer() {
 
   // Telegram Bot Setup
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  if (token) {
-    const bot = new TelegramBot(token, { polling: true });
-    
-    bot.onText(/\/start/, (msg) => {
-      const chatId = msg.chat.id;
-      bot.sendMessage(chatId, 'Welcome! \n/generate - Get all usernames\n/check - Check Instagram availability');
-    });
+  if (!token) {
+    console.warn('TELEGRAM_BOT_TOKEN not found. Bot functionality disabled.');
+    return;
+  }
 
-    bot.onText(/\/generate/, (msg) => {
-      const chatId = msg.chat.id;
-      const usernames = generateUsernames();
-      bot.sendMessage(chatId, usernames.join('\n'));
-    });
+  const bot = new TelegramBot(token, { polling: true });
+  const activeTasks = new Map<number, boolean>();
 
-    bot.onText(/\/check/, async (msg) => {
-      const chatId = msg.chat.id;
-      bot.sendMessage(chatId, 'Checking Instagram availability... (this may take a moment)');
-      
-      const usernames = generateUsernames();
-      const results = [];
-      
-      for (const username of usernames) {
-        const result = await checkInstagram(username);
-        if (result.available) {
-          results.push(`✅ ${username}`);
-        } else {
-          results.push(`❌ ${username}`);
+  bot.onText(/\/start/, (msg) => {
+    bot.sendMessage(msg.chat.id, 'Welcome! \n/run - Start continuous AI scanning\n/stop - Stop scanning immediately');
+  });
+
+  bot.onText(/\/stop/, (msg) => {
+    const chatId = msg.chat.id;
+    if (activeTasks.get(chatId)) {
+      activeTasks.set(chatId, false);
+      bot.sendMessage(chatId, '🛑 Stopping process immediately...');
+    } else {
+      bot.sendMessage(chatId, 'No active process to stop.');
+    }
+  });
+
+  bot.onText(/\/run/, async (msg) => {
+    const chatId = msg.chat.id;
+    if (activeTasks.get(chatId)) {
+      bot.sendMessage(chatId, '⚠️ Process is already running.');
+      return;
+    }
+
+    activeTasks.set(chatId, true);
+    bot.sendMessage(chatId, '🚀 Starting continuous AI scan...\nPattern: adi/aadi + . / _ + 2 letters\nUse /stop to terminate.');
+
+    let totalChecked = 0;
+    let totalTaken = 0;
+
+    while (activeTasks.get(chatId)) {
+      try {
+        // Generate 25 usernames via Gemini
+        const usernames = await generateUsernamesWithAI();
+        if (usernames.length === 0) {
+          bot.sendMessage(chatId, '⚠️ AI failed to generate usernames. Retrying in 30s...');
+          await new Promise(resolve => setTimeout(resolve, 30000));
+          continue;
+        }
+
+        for (const username of usernames) {
+          if (!activeTasks.get(chatId)) break;
+
+          const result = await checkInstagram(username);
+          
+          if (result.rateLimited) {
+            const pauseTime = 60000 + Math.random() * 60000; // 60-120s
+            bot.sendMessage(chatId, `⚠️ Rate limited. Pausing for ${Math.round(pauseTime/1000)}s...`);
+            await new Promise(resolve => setTimeout(resolve, pauseTime));
+            continue;
+          }
+
+          totalChecked++;
+          if (result.available) {
+            bot.sendMessage(chatId, `✅ Available: ${username}`);
+          } else {
+            totalTaken++;
+          }
+
+          // Random delay 3-7 seconds
+          const delay = 3000 + Math.random() * 4000;
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+
+        if (activeTasks.get(chatId)) {
+          bot.sendMessage(chatId, `📊 Stats | Checked: ${totalChecked} | Taken: ${totalTaken}`);
+        }
+      } catch (error) {
+        console.error('Loop Error:', error);
+        if (activeTasks.get(chatId)) {
+          bot.sendMessage(chatId, '❌ Network error. Retrying in 10s...');
+          await new Promise(resolve => setTimeout(resolve, 10000));
         }
       }
-      
-      bot.sendMessage(chatId, `Instagram Availability:\n\n${results.join('\n')}`);
-    });
+    }
 
-    console.log('Telegram bot is running...');
-  } else {
-    console.warn('TELEGRAM_BOT_TOKEN not found. Bot functionality disabled.');
-  }
+    bot.sendMessage(chatId, '🏁 Process terminated.');
+  });
 
   // Health check endpoint
   app.get('/', (req, res) => {

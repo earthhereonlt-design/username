@@ -1,6 +1,6 @@
 import express from 'express';
 import TelegramBot from 'node-telegram-bot-api';
-import { generateUsernamesWithAI, checkInstagram } from './src/generator.ts';
+import { generateUsernamesWithAI, checkInstagram } from './src/generator.js';
 
 async function startServer() {
   const app = express();
@@ -17,38 +17,53 @@ async function startServer() {
   const activeTasks = new Map<number, boolean>();
 
   bot.onText(/\/start/, (msg) => {
-    bot.sendMessage(msg.chat.id, 'Welcome! \n/run - Start continuous AI scanning\n/stop - Stop scanning immediately');
+    bot.sendMessage(msg.chat.id, 
+      '<b>🚀 Minimal Username Bot</b>\n\n' +
+      'Use the commands below to control the scanner:\n\n' +
+      '▶️ /run - Start continuous AI scanning\n' +
+      '🛑 /stop - Stop scanning immediately\n\n' +
+      '<i>Pattern: adi/aadi + . / _ + 2 letters</i>', 
+      { parse_mode: 'HTML' }
+    );
   });
 
   bot.onText(/\/stop/, (msg) => {
     const chatId = msg.chat.id;
     if (activeTasks.get(chatId)) {
       activeTasks.set(chatId, false);
-      bot.sendMessage(chatId, '🛑 Stopping process immediately...');
+      bot.sendMessage(chatId, '<b>🛑 Stopping process...</b>\nThe scanner will terminate after the current check.', { parse_mode: 'HTML' });
     } else {
-      bot.sendMessage(chatId, 'No active process to stop.');
+      bot.sendMessage(chatId, '❌ No active process to stop.', { parse_mode: 'HTML' });
     }
   });
 
   bot.onText(/\/run/, async (msg) => {
     const chatId = msg.chat.id;
     if (activeTasks.get(chatId)) {
-      bot.sendMessage(chatId, '⚠️ Process is already running.');
+      bot.sendMessage(chatId, '⚠️ <b>Process is already running.</b>', { parse_mode: 'HTML' });
       return;
     }
 
     activeTasks.set(chatId, true);
-    bot.sendMessage(chatId, '🚀 Starting continuous AI scan...\nPattern: adi/aadi + . / _ + 2 letters\nUse /stop to terminate.');
+    bot.sendMessage(chatId, 
+      '<b>⚡ Scanner Started</b>\n' +
+      '--------------------------\n' +
+      '🔍 <b>Target:</b> Instagram\n' +
+      '🤖 <b>AI:</b> Gemini 2.0 Flash\n' +
+      '--------------------------\n' +
+      '<i>Continuous scanning initiated...</i>', 
+      { parse_mode: 'HTML' }
+    );
 
     let totalChecked = 0;
     let totalTaken = 0;
+    let totalFound = 0;
 
     while (activeTasks.get(chatId)) {
       try {
-        // Generate 25 usernames via Gemini
         const usernames = await generateUsernamesWithAI();
         if (usernames.length === 0) {
-          bot.sendMessage(chatId, '⚠️ AI failed to generate usernames. Retrying in 30s...');
+          bot.sendMessage(chatId, '⏳ <i>AI failed to generate. Retrying in 30s...</i>', { parse_mode: 'HTML' });
           await new Promise(resolve => setTimeout(resolve, 30000));
           continue;
         }
@@ -59,37 +74,52 @@ async function startServer() {
           const result = await checkInstagram(username);
           
           if (result.rateLimited) {
-            const pauseTime = 60000 + Math.random() * 60000; // 60-120s
-            bot.sendMessage(chatId, `⚠️ Rate limited. Pausing for ${Math.round(pauseTime/1000)}s...`);
+            const pauseTime = 60000 + Math.random() * 60000;
+            bot.sendMessage(chatId, `⏳ <b>Rate Limited</b>\nPausing for ${Math.round(pauseTime/1000)}s to avoid block...`, { parse_mode: 'HTML' });
             await new Promise(resolve => setTimeout(resolve, pauseTime));
             continue;
           }
 
           totalChecked++;
           if (result.available) {
-            bot.sendMessage(chatId, `✅ Available: ${username}`);
+            totalFound++;
+            bot.sendMessage(chatId, 
+              `✨ <b>AVAILABLE FOUND!</b>\n` +
+              `--------------------------\n` +
+              `👤 <b>Username:</b> <code>${username}</code>\n` +
+              `🔗 <a href="https://instagram.com/${username}">Open Instagram</a>\n` +
+              `--------------------------`, 
+              { parse_mode: 'HTML', disable_web_page_preview: true }
+            );
           } else {
             totalTaken++;
           }
 
-          // Random delay 3-7 seconds
           const delay = 3000 + Math.random() * 4000;
           await new Promise(resolve => setTimeout(resolve, delay));
         }
 
         if (activeTasks.get(chatId)) {
-          bot.sendMessage(chatId, `📊 Stats | Checked: ${totalChecked} | Taken: ${totalTaken}`);
+          bot.sendMessage(chatId, 
+            `📊 <b>Session Stats</b>\n` +
+            `--------------------------\n` +
+            `✅ Checked: <b>${totalChecked}</b>\n` +
+            `❌ Taken: <b>${totalTaken}</b>\n` +
+            `🎁 Found: <b>${totalFound}</b>\n` +
+            `--------------------------`, 
+            { parse_mode: 'HTML' }
+          );
         }
       } catch (error) {
         console.error('Loop Error:', error);
         if (activeTasks.get(chatId)) {
-          bot.sendMessage(chatId, '❌ Network error. Retrying in 10s...');
+          bot.sendMessage(chatId, '❌ <b>Network error.</b> Retrying in 10s...', { parse_mode: 'HTML' });
           await new Promise(resolve => setTimeout(resolve, 10000));
         }
       }
     }
 
-    bot.sendMessage(chatId, '🏁 Process terminated.');
+    bot.sendMessage(chatId, '🏁 <b>Process Terminated.</b>', { parse_mode: 'HTML' });
   });
 
   // Health check endpoint

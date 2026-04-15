@@ -80,9 +80,11 @@ export async function checkInstagram(username: string): Promise<{ username: stri
     });
 
     if (response.status === 429) {
+      console.warn(`[Instagram] Rate limited (429) for ${username}`);
       return { username, available: false, rateLimited: true };
     }
 
+    console.log(`[Instagram] Checked ${username} - Status: ${response.status}`);
     // Instagram returns 404 for available usernames
     return { username, available: response.status === 404 };
   } catch (error) {

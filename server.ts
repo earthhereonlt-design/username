@@ -1,6 +1,9 @@
 import express from 'express';
 import TelegramBot from 'node-telegram-bot-api';
+import * as dotenv from 'dotenv';
 import { generateUsernamesWithAI, checkInstagram } from './src/generator.js';
+
+dotenv.config();
 
 async function startServer() {
   const app = express();
@@ -39,6 +42,7 @@ async function startServer() {
 
   bot.onText(/\/run/, async (msg) => {
     const chatId = msg.chat.id;
+    console.log(`[Bot] Received /run from chatId: ${chatId}`);
     if (activeTasks.get(chatId)) {
       bot.sendMessage(chatId, '⚠️ <b>Process is already running.</b>', { parse_mode: 'HTML' });
       return;
@@ -62,6 +66,7 @@ async function startServer() {
     while (activeTasks.get(chatId)) {
       try {
         const usernames = await generateUsernamesWithAI();
+        console.log(`[AI] Generated ${usernames.length} usernames for chatId: ${chatId}`);
         if (usernames.length === 0) {
           bot.sendMessage(chatId, '⏳ <i>AI failed to generate. Retrying in 30s...</i>', { parse_mode: 'HTML' });
           await new Promise(resolve => setTimeout(resolve, 30000));

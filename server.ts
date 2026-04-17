@@ -67,9 +67,10 @@ async function startServer() {
       try {
         const usernames = await generateUsernamesWithAI();
         console.log(`[AI] Generated ${usernames.length} usernames for chatId: ${chatId}`);
+        
         if (usernames.length === 0) {
-          bot.sendMessage(chatId, '⏳ <i>AI failed to generate. Retrying in 30s...</i>', { parse_mode: 'HTML' });
-          await new Promise(resolve => setTimeout(resolve, 30000));
+          bot.sendMessage(chatId, '⏳ <b>AI Validation Issue</b>\nGemini generated content but none passed the strict 2-letter suffix rule. Retrying with a fresh prompt...', { parse_mode: 'HTML' });
+          await new Promise(resolve => setTimeout(resolve, 5000));
           continue;
         }
 
@@ -100,7 +101,8 @@ async function startServer() {
             totalTaken++;
           }
 
-          const delay = 3000 + Math.random() * 4000;
+          // Increased delay to 5-12 seconds to be safer against Instagram blocks
+          const delay = 5000 + Math.random() * 7000;
           await new Promise(resolve => setTimeout(resolve, delay));
         }
 
@@ -115,11 +117,27 @@ async function startServer() {
             { parse_mode: 'HTML' }
           );
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error('Loop Error:', error);
+        
+        const isAuthError = error?.message?.includes('CRITICAL_AUTH');
+        const is429 = error?.status === 429 || error?.response?.status === 429 || error?.message?.includes('429') || error?.message?.includes('RETRY_429');
+        
         if (activeTasks.get(chatId)) {
-          bot.sendMessage(chatId, '❌ <b>Network error.</b> Retrying in 10s...', { parse_mode: 'HTML' });
-          await new Promise(resolve => setTimeout(resolve, 10000));
+          let message = '❌ <b>Unexpected Network Error</b>\nRetrying in 30s...';
+          let waitTime = 30000;
+
+          if (isAuthError) {
+            message = '🚫 <b>API Key Error</b>\nYour Gemini API key is invalid or expired. Please check your AI Studio secrets.';
+            activeTasks.set(chatId, false); // Stop the task if it's an auth error
+            waitTime = 0;
+          } else if (is429) {
+            message = '⚠️ <b>AI Rate Limit Hit</b>\nToo many requests to Gemini. Pausing for 5 minutes to reset quota...';
+            waitTime = 300000;
+          }
+          
+          bot.sendMessage(chatId, message, { parse_mode: 'HTML' });
+          if (waitTime > 0) await new Promise(resolve => setTimeout(resolve, waitTime));
         }
       }
     }

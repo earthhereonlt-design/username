@@ -2,7 +2,7 @@
  * Username generation logic based on strict rules.
  */
 
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export const BASES = ['adi', 'aadi'];
 export const SEPARATORS = ['.', '_'];
@@ -16,31 +16,42 @@ export async function generateUsernamesWithAI(): Promise<string[]> {
     throw new Error("GEMINI_API_KEY is not set.");
   }
 
-  const genAI = new GoogleGenAI({ apiKey });
-  // Using the recommended model from the skill
-  const model = "gemini-2.0-flash";
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-  const prompt = `Generate exactly 25 unique usernames.
-  Rules:
-  - Must start with "adi" or "aadi".
-  - Must contain exactly ONE separator: "_" or ".".
-  - Total length must be 6 or 7 characters.
-  - After the separator, there must be exactly 2 lowercase letters.
-  - No numbers, no extra words, no extensions.
-  - Format: Output ONLY the usernames, one per line.
-  - Examples: adi_xy, adi.ab, aadi_qr.`;
+  const prompt = `Task: Generate exactly 25 unique usernames.
+  Strict Formatting Rules:
+  - Each username must be on a new line.
+  - DO NOT use bullets, numbers, or dashes.
+  - DO NOT include any text other than the usernames.
+
+  Generation Pattern:
+  - Base: Must start with "adi" or "aadi".
+  - Separator: Must have exactly ONE "." or "_".
+  - Suffix: Exactly 2 lowercase letters (a-z).
+  - Total length: Must be exactly 6 or 7 characters.
+
+  Example Output:
+  adi.ab
+  aadi_xy
+  adi_qw
+  aadi.zz`;
 
   try {
-    const response = await genAI.models.generateContent({
-      model,
-      contents: [{ parts: [{ text: prompt }] }]
-    });
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+    
+    if (!text) {
+      console.warn("Gemini returned empty text.");
+      return [];
+    }
 
-    const text = response.text || "";
-    return text.split('\n')
-      .map(u => u.trim().toLowerCase())
+    const lines = text.split('\n');
+    const filtered = lines
+      .map(u => u.trim().replace(/^[-*•]\s+/, '').toLowerCase()) // Remove bullets if any
       .filter(u => {
-        // Validation logic
+        // Strict Validation logic
         const hasBase = u.startsWith('adi') || u.startsWith('aadi');
         const hasOneSep = (u.match(/[._]/g) || []).length === 1;
         const parts = u.split(/[._]/);
@@ -49,9 +60,25 @@ export async function generateUsernamesWithAI(): Promise<string[]> {
         return hasBase && hasOneSep && validSuffix && validLength;
       })
       .slice(0, 25);
-  } catch (error) {
+
+    if (filtered.length === 0) {
+      console.warn("AI generated content but none passed validation filter. Raw output:", text);
+    }
+
+    return filtered;
+  } catch (error: any) {
+    // If it's a rate limit error, rethrow it so the main loop can pause longer
+    if (error?.status === 429 || error?.response?.status === 429 || error?.message?.includes('429')) {
+      throw new Error(`RETRY_429: ${error.message || 'Rate limit exceeded'}`);
+    }
+    
+    // Check for API key errors specifically
+    if (error?.message?.includes('API_KEY_INVALID') || error?.message?.includes('key not valid')) {
+      throw new Error(`CRITICAL_AUTH: ${error.message}`);
+    }
+
     console.error("Gemini Generation Error:", error);
-    return [];
+    throw error; // Throw so server.ts can report the specific error
   }
 }
 

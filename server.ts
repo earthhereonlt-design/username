@@ -102,7 +102,7 @@ async function startServer() {
             
             // If we hit too many errors (400/302/429), take a long break
             const pauseTime = consecutiveErrors >= 3 
-              ? (600000 + Math.random() * 300000) // 10-15 min break
+              ? (600000 + Math.random() * 600000) // 10-20 min break
               : (120000 + Math.random() * 120000); // 2-4 min break
 
             const waitMsg = consecutiveErrors >= 3 
@@ -116,7 +116,12 @@ async function startServer() {
             continue;
           }
 
-          // Reset error count on successful check (200 or 404)
+          if (result.unknown) {
+            console.log(`[${new Date().toISOString()}] [LOOP] ❓ ${username} result is unknown/ambiguous. Skipping...`);
+            continue;
+          }
+
+          // Reset error count on successful check
           consecutiveErrors = 0;
 
           totalChecked++;
@@ -135,9 +140,15 @@ async function startServer() {
             totalTaken++;
           }
 
-          // Increased delay to 5-12 seconds to be safer against Instagram blocks
-          const delay = 5000 + Math.random() * 7000;
+          // Safe delay between checks
+          const delay = 10000 + Math.random() * 8000;
           await new Promise(resolve => setTimeout(resolve, delay));
+        }
+
+        // Batch rest to let the IP cool down after 25 checks
+        if (activeTasks.get(chatId)) {
+          console.log(`[${new Date().toISOString()}] [LOOP] Batch complete. Resting for 60s...`);
+          await new Promise(resolve => setTimeout(resolve, 60000));
         }
       } catch (error: any) {
         console.error('Loop Error:', error);

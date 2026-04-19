@@ -13,14 +13,23 @@ export const SEPARATORS = ['.', '_'];
 export async function generateUsernamesWithAI(): Promise<string[]> {
   const apiKey = process.env.GEMINI_API_KEY;
   
-  // Local generator as fallback
+  // Local generator as fallback - Improved with common aesthetic suffixes
   const generateLocally = () => {
     const results: string[] = [];
+    // Aesthetic 2-letter combos common in high-value usernames
+    const commonSuffixes = ['io', 'hq', 'ly', 'fx', 'me', 'it', 'up', 'xo', 'tv', 'go', 'ai', 'ux', 'dr', 'my', 'st'];
     const alphabet = 'abcdefghijklmnopqrstuvwxyz';
+
     for (let i = 0; i < 25; i++) {
       const base = BASES[Math.floor(Math.random() * BASES.length)];
       const sep = SEPARATORS[Math.floor(Math.random() * SEPARATORS.length)];
-      const suffix = alphabet[Math.floor(Math.random() * 26)] + alphabet[Math.floor(Math.random() * 26)];
+      
+      // 40% chance of using an "aesthetic" suffix, 60% chance of pure random
+      const useCommon = Math.random() < 0.4;
+      const suffix = useCommon 
+        ? commonSuffixes[Math.floor(Math.random() * commonSuffixes.length)]
+        : alphabet[Math.floor(Math.random() * 26)] + alphabet[Math.floor(Math.random() * 26)];
+      
       results.push(`${base}${sep}${suffix}`);
     }
     return results;
@@ -44,14 +53,14 @@ export async function generateUsernamesWithAI(): Promise<string[]> {
   Generation Pattern:
   - Base: Must start with "adi" or "aadi".
   - Separator: Must have exactly ONE "." or "_".
-  - Suffix: Exactly 2 lowercase letters (a-z).
+  - Suffix: Exactly 2 lowercase letters (a-z). Prefer combinations that sound aesthetic or are common in web culture (e.g., io, ly, hq, fx).
   - Total length: Must be exactly 6 or 7 characters.
 
   Example Output:
-  adi.ab
-  aadi_xy
-  adi_qw
-  aadi.zz`;
+  adi.io
+  aadi_ly
+  adi_hq
+  aadi.fx`;
 
   try {
     const result = await model.generateContent(prompt);
@@ -97,56 +106,108 @@ export async function generateUsernamesWithAI(): Promise<string[]> {
   }
 }
 
+export interface CheckResult {
+  username: string;
+  available: boolean;
+  rateLimited: boolean;
+  unknown: boolean;
+}
+
 /**
  * Checks if a username is likely available on Instagram.
+ * Uses content validation as status codes alone can be misleading.
  */
-export async function checkInstagram(username: string): Promise<{ username: string; available: boolean; rateLimited?: boolean }> {
+export async function checkInstagram(username: string): Promise<CheckResult> {
   const userAgents = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1'
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0',
+    'Mozilla/5.0 (AppleChromebook) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.6167.160 Safari/537.36',
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1',
+    'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.119 Mobile Safari/537.36'
   ];
 
-  const randomUA = userAgents[Math.floor(Math.random() * userAgents.length)];
+  const backoffs = [5000, 15000, 30000];
+  let attempt = 0;
 
-  try {
-    // Adding a random delay within the check to simulate human thinking/typing
-    await new Promise(resolve => setTimeout(resolve, Math.random() * 2000));
-
-    // Reverting to the standard profile URL as it's more stable against 400 errors
-    const url = `https://www.instagram.com/${username}/`; 
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'User-Agent': randomUA,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Upgrade-Insecure-Requests': '1',
-      },
-    });
-
+  while (attempt <= backoffs.length) {
+    const randomUA = userAgents[Math.floor(Math.random() * userAgents.length)];
     const timestamp = new Date().toISOString();
 
-    if (response.status === 429) {
-      console.log(`[${timestamp}] [CHECK] ⚠️  ${username} -> RATE LIMITED (429)`);
-      return { username, available: false, rateLimited: true };
-    }
+    try {
+      // Random jitter before starting an attempt
+      await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
 
-    // 404 means available. 200 means taken. 
-    // 400/302/301 are signs of bot detection or IP flags.
-    const available = response.status === 404;
-    const isError = (response.status >= 400 && response.status !== 404) || (response.status >= 300 && response.status < 400);
-    
-    const statusIcon = available ? '✅' : (isError ? '⚠️' : '❌');
-    console.log(`[${timestamp}] [CHECK] ${statusIcon} ${username} (HTTP ${response.status})`);
-    
-    return { username, available, rateLimited: isError };
-  } catch (error: any) {
-    console.error(`[${new Date().toISOString()}] [CHECK] Error checking ${username}:`, error.message);
-    return { username, available: false };
+      const url = `https://www.instagram.com/${username}/`;
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'User-Agent': randomUA,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache',
+          'Sec-Fetch-Dest': 'document',
+          'Sec-Fetch-Mode': 'navigate',
+          'Sec-Fetch-Site': 'none',
+          'Sec-Fetch-User': '?1',
+          'Upgrade-Insecure-Requests': '1',
+        },
+      });
+
+      if (response.status === 429) {
+        console.log(`[${timestamp}] [CHECK] ⚠️  ${username} -> RATE LIMITED (429)`);
+        return { username, available: false, rateLimited: true, unknown: true };
+      }
+
+      if (response.status === 400 || (response.status >= 300 && response.status < 400)) {
+        if (attempt < backoffs.length) {
+          const wait = backoffs[attempt];
+          console.log(`[${timestamp}] [CHECK] ⚠️  ${username} -> HTTP ${response.status}. Retrying in ${wait / 1000}s... (Attempt ${attempt + 1})`);
+          await new Promise(resolve => setTimeout(resolve, wait));
+          attempt++;
+          continue;
+        } else {
+          console.log(`[${timestamp}] [CHECK] ⚠️  ${username} -> Repeated HTTP ${response.status}. Treatment as block.`);
+          return { username, available: false, rateLimited: true, unknown: true };
+        }
+      }
+
+      const body = await response.text();
+      
+      // Content Validation Logic
+      const isNotFoundMsg = body.includes("Sorry, this page isn't available") || body.includes("Page Not Found");
+      const hasProfileMeta = body.includes("profilePage_") || body.includes("username") || body.includes("\"biography\"");
+      
+      const available = isNotFoundMsg || response.status === 404;
+      const taken = hasProfileMeta || response.status === 200;
+
+      if (available && !taken) {
+        console.log(`[${timestamp}] [CHECK] ✅ ${username} (Detected as AVAILABLE via Content)`);
+        return { username, available: true, rateLimited: false, unknown: false };
+      }
+
+      if (taken) {
+        console.log(`[${timestamp}] [CHECK] ❌ ${username} (Detected as TAKEN via Content)`);
+        return { username, available: false, rateLimited: false, unknown: false };
+      }
+
+      // If ambiguous
+      console.log(`[${timestamp}] [CHECK] ❓ ${username} -> Ambiguous response. Treating as unknown.`);
+      return { username, available: false, rateLimited: false, unknown: true };
+
+    } catch (error: any) {
+      console.error(`[${timestamp}] [CHECK] 💥 Error checking ${username}:`, error.message);
+      if (attempt < backoffs.length) {
+        const wait = backoffs[attempt];
+        await new Promise(resolve => setTimeout(resolve, wait));
+        attempt++;
+        continue;
+      }
+      return { username, available: false, rateLimited: false, unknown: true };
+    }
   }
+
+  return { username, available: false, rateLimited: false, unknown: true };
 }

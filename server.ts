@@ -10,13 +10,21 @@ async function startServer() {
   const PORT = Number(process.env.PORT) || 3000;
 
   // Telegram Bot Setup
-  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
   if (!token) {
     console.warn('TELEGRAM_BOT_TOKEN not found. Bot functionality disabled.');
     return;
   }
 
   const bot = new TelegramBot(token, { polling: true });
+  
+  bot.on('polling_error', (error: any) => {
+    console.error(`[Telegram Polling Error] ${error.code || 'UNKNOWN'}: ${error.message}`);
+    if (error.message?.includes('ERR_UNESCAPED_CHARACTERS')) {
+      console.error('Check if your TELEGRAM_BOT_TOKEN has hidden spaces or special characters.');
+    }
+  });
+
   const activeTasks = new Map<number, boolean>();
 
   bot.onText(/\/start/, (msg) => {

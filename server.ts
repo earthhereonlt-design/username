@@ -50,12 +50,12 @@ async function startServer() {
 
     activeTasks.set(chatId, true);
     bot.sendMessage(chatId, 
-      '<b>⚡ Scanner Started</b>\n' +
+      '<b>⚡ Scanner v3 Initialized</b>\n' +
       '--------------------------\n' +
       '🔍 <b>Target:</b> Instagram\n' +
-      '🤖 <b>AI:</b> Gemini 2.0 Flash\n' +
+      '🤖 <b>Logic:</b> Gemini + Local Fallback\n' +
       '--------------------------\n' +
-      '<i>Continuous scanning initiated...</i>', 
+      '<i>Continuous high-availability scan active...</i>', 
       { parse_mode: 'HTML' }
     );
 
@@ -66,13 +66,7 @@ async function startServer() {
     while (activeTasks.get(chatId)) {
       try {
         const usernames = await generateUsernamesWithAI();
-        console.log(`[AI] Generated ${usernames.length} usernames for chatId: ${chatId}`);
-        
-        if (usernames.length === 0) {
-          bot.sendMessage(chatId, '⏳ <b>AI Validation Issue</b>\nGemini generated content but none passed the strict 2-letter suffix rule. Retrying with a fresh prompt...', { parse_mode: 'HTML' });
-          await new Promise(resolve => setTimeout(resolve, 5000));
-          continue;
-        }
+        console.log(`[${new Date().toISOString()}] [LOOP] Processing new batch of ${usernames.length} candidates.`);
 
         for (const username of usernames) {
           if (!activeTasks.get(chatId)) break;
@@ -81,6 +75,7 @@ async function startServer() {
           
           if (result.rateLimited) {
             const pauseTime = 60000 + Math.random() * 60000;
+            console.log(`[${new Date().toISOString()}] [LOOP] 🛑 Rate limit hit. Cooling down for ${Math.round(pauseTime/1000)}s...`);
             bot.sendMessage(chatId, `⏳ <b>Rate Limited</b>\nPausing for ${Math.round(pauseTime/1000)}s to avoid block...`, { parse_mode: 'HTML' });
             await new Promise(resolve => setTimeout(resolve, pauseTime));
             continue;
@@ -89,6 +84,7 @@ async function startServer() {
           totalChecked++;
           if (result.available) {
             totalFound++;
+            console.log(`[${new Date().toISOString()}] [FOUND] ⭐ ${username} is AVAILABLE!`);
             bot.sendMessage(chatId, 
               `✨ <b>AVAILABLE FOUND!</b>\n` +
               `--------------------------\n` +

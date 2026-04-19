@@ -12,10 +12,26 @@ export const SEPARATORS = ['.', '_'];
  */
 export async function generateUsernamesWithAI(): Promise<string[]> {
   const apiKey = process.env.GEMINI_API_KEY;
+  
+  // Local generator as fallback
+  const generateLocally = () => {
+    const results: string[] = [];
+    const alphabet = 'abcdefghijklmnopqrstuvwxyz';
+    for (let i = 0; i < 25; i++) {
+      const base = BASES[Math.floor(Math.random() * BASES.length)];
+      const sep = SEPARATORS[Math.floor(Math.random() * SEPARATORS.length)];
+      const suffix = alphabet[Math.floor(Math.random() * 26)] + alphabet[Math.floor(Math.random() * 26)];
+      results.push(`${base}${sep}${suffix}`);
+    }
+    return results;
+  };
+
   if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not set.");
+    console.log(`[${new Date().toISOString()}] [GEN] GEMINI_API_KEY not found. Using local fallback...`);
+    return generateLocally();
   }
 
+  console.log(`[${new Date().toISOString()}] [GEN] Requesting 25 usernames from Gemini...`);
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
@@ -62,23 +78,22 @@ export async function generateUsernamesWithAI(): Promise<string[]> {
       .slice(0, 25);
 
     if (filtered.length === 0) {
-      console.warn("AI generated content but none passed validation filter. Raw output:", text);
+      console.log(`[${new Date().toISOString()}] [GEN] Gemini results failed validation. Using local fallback.`);
+      return generateLocally();
     }
 
+    console.log(`[${new Date().toISOString()}] [GEN] Successfully received ${filtered.length} valid usernames from AI.`);
     return filtered;
   } catch (error: any) {
-    // If it's a rate limit error, rethrow it so the main loop can pause longer
-    if (error?.status === 429 || error?.response?.status === 429 || error?.message?.includes('429')) {
-      throw new Error(`RETRY_429: ${error.message || 'Rate limit exceeded'}`);
-    }
-    
     // Check for API key errors specifically
     if (error?.message?.includes('API_KEY_INVALID') || error?.message?.includes('key not valid')) {
+      console.error(`[${new Date().toISOString()}] [AUTH] CRITICAL: Invalid API Key.`);
       throw new Error(`CRITICAL_AUTH: ${error.message}`);
     }
 
-    console.error("Gemini Generation Error:", error);
-    throw error; // Throw so server.ts can report the specific error
+    // If it's a rate limit or any other error, use local generator to keep the bot moving
+    console.log(`[${new Date().toISOString()}] [GEN] Gemini error (Rate limit or network). Falling back to local...`);
+    return generateLocally();
   }
 }
 
@@ -96,26 +111,35 @@ export async function checkInstagram(username: string): Promise<{ username: stri
   const randomUA = userAgents[Math.floor(Math.random() * userAgents.length)];
 
   try {
-    const url = `https://www.instagram.com/${username}/`;
+    // Adding a random delay within the check to simulate human thinking/typing
+    await new Promise(resolve => setTimeout(resolve, Math.random() * 2000));
+
+    const url = `https://www.instagram.com/${username}/?__a=1&__d=dis`; // Using internal param hints
     const response = await fetch(url, {
       method: 'GET',
       headers: {
         'User-Agent': randomUA,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept': '*/*',
         'Accept-Language': 'en-US,en;q=0.9',
+        'X-IG-App-ID': '936619743392459', // Common public IG app ID
+        'X-Requested-With': 'XMLHttpRequest',
       },
     });
 
+    const timestamp = new Date().toISOString();
+
     if (response.status === 429) {
-      console.warn(`[Instagram] Rate limited (429) for ${username}`);
+      console.log(`[${timestamp}] [CHECK] ⚠️  ${username} -> RATE LIMITED (429)`);
       return { username, available: false, rateLimited: true };
     }
 
-    console.log(`[Instagram] Checked ${username} - Status: ${response.status}`);
-    // Instagram returns 404 for available usernames
-    return { username, available: response.status === 404 };
-  } catch (error) {
-    console.error(`Fetch error for ${username}:`, error);
+    const available = response.status === 404;
+    const statusIcon = available ? '✅' : '❌';
+    console.log(`[${timestamp}] [CHECK] ${statusIcon} ${username} (HTTP ${response.status})`);
+    
+    return { username, available };
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] [CHECK] Error checking ${username}:`, error.message);
     return { username, available: false };
   }
 }

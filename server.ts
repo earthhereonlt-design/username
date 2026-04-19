@@ -49,19 +49,41 @@ async function startServer() {
     }
 
     activeTasks.set(chatId, true);
-    bot.sendMessage(chatId, 
+    const statusMsg = await bot.sendMessage(chatId, 
       '<b>⚡ Scanner v3 Initialized</b>\n' +
       '--------------------------\n' +
-      '🔍 <b>Target:</b> Instagram\n' +
-      '🤖 <b>Logic:</b> Gemini + Local Fallback\n' +
-      '--------------------------\n' +
-      '<i>Continuous high-availability scan active...</i>', 
+      '🔍 Preparing first batch...\n' +
+      '--------------------------', 
       { parse_mode: 'HTML' }
     );
 
     let totalChecked = 0;
     let totalTaken = 0;
     let totalFound = 0;
+    let consecutiveErrors = 0;
+
+    const updateStatus = async (currentUsername: string) => {
+      try {
+        const errorIndicator = consecutiveErrors > 0 ? ` (⚠️ Errors: ${consecutiveErrors})` : '';
+        await bot.editMessageText(
+          `<b>🚀 Scanner v3 Active</b>\n` +
+          `--------------------------\n` +
+          `👤 <b>Checking:</b> <code>${currentUsername}</code>\n` +
+          `✅ <b>Total Checked:</b> ${totalChecked}\n` +
+          `❌ <b>Taken:</b> ${totalTaken}\n` +
+          `✨ <b>Found:</b> ${totalFound}${errorIndicator}\n` +
+          `--------------------------\n` +
+          `<i>Editing this message to save space...</i>`,
+          {
+            chat_id: chatId,
+            message_id: statusMsg.message_id,
+            parse_mode: 'HTML'
+          }
+        );
+      } catch (e) {
+        // Ignore edit errors
+      }
+    };
 
     while (activeTasks.get(chatId)) {
       try {
@@ -71,15 +93,31 @@ async function startServer() {
         for (const username of usernames) {
           if (!activeTasks.get(chatId)) break;
 
+          await updateStatus(username);
+
           const result = await checkInstagram(username);
           
           if (result.rateLimited) {
-            const pauseTime = 60000 + Math.random() * 60000;
-            console.log(`[${new Date().toISOString()}] [LOOP] 🛑 Rate limit hit. Cooling down for ${Math.round(pauseTime/1000)}s...`);
-            bot.sendMessage(chatId, `⏳ <b>Rate Limited</b>\nPausing for ${Math.round(pauseTime/1000)}s to avoid block...`, { parse_mode: 'HTML' });
+            consecutiveErrors++;
+            
+            // If we hit too many errors (400/302/429), take a long break
+            const pauseTime = consecutiveErrors >= 3 
+              ? (600000 + Math.random() * 300000) // 10-15 min break
+              : (120000 + Math.random() * 120000); // 2-4 min break
+
+            const waitMsg = consecutiveErrors >= 3 
+              ? `🚨 <b>Critical Block Detected</b>\nToo many warnings received. Resting for ${Math.round(pauseTime/60000)} minutes to clear IP flag...`
+              : `⏳ <b>Soft Rate Limit</b>\nInstagram is suspicious. Pausing for ${Math.round(pauseTime/1000)}s...`;
+
+            console.log(`[${new Date().toISOString()}] [LOOP] 🛑 Blocked. Cooling down for ${Math.round(pauseTime/1000)}s. Error count: ${consecutiveErrors}`);
+            bot.sendMessage(chatId, waitMsg, { parse_mode: 'HTML' });
+            
             await new Promise(resolve => setTimeout(resolve, pauseTime));
             continue;
           }
+
+          // Reset error count on successful check (200 or 404)
+          consecutiveErrors = 0;
 
           totalChecked++;
           if (result.available) {
@@ -100,18 +138,6 @@ async function startServer() {
           // Increased delay to 5-12 seconds to be safer against Instagram blocks
           const delay = 5000 + Math.random() * 7000;
           await new Promise(resolve => setTimeout(resolve, delay));
-        }
-
-        if (activeTasks.get(chatId)) {
-          bot.sendMessage(chatId, 
-            `📊 <b>Session Stats</b>\n` +
-            `--------------------------\n` +
-            `✅ Checked: <b>${totalChecked}</b>\n` +
-            `❌ Taken: <b>${totalTaken}</b>\n` +
-            `🎁 Found: <b>${totalFound}</b>\n` +
-            `--------------------------`, 
-            { parse_mode: 'HTML' }
-          );
         }
       } catch (error: any) {
         console.error('Loop Error:', error);

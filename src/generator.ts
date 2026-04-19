@@ -114,15 +114,18 @@ export async function checkInstagram(username: string): Promise<{ username: stri
     // Adding a random delay within the check to simulate human thinking/typing
     await new Promise(resolve => setTimeout(resolve, Math.random() * 2000));
 
-    const url = `https://www.instagram.com/${username}/?__a=1&__d=dis`; // Using internal param hints
+    // Reverting to the standard profile URL as it's more stable against 400 errors
+    const url = `https://www.instagram.com/${username}/`; 
     const response = await fetch(url, {
       method: 'GET',
       headers: {
         'User-Agent': randomUA,
-        'Accept': '*/*',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
-        'X-IG-App-ID': '936619743392459', // Common public IG app ID
-        'X-Requested-With': 'XMLHttpRequest',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Upgrade-Insecure-Requests': '1',
       },
     });
 
@@ -133,11 +136,15 @@ export async function checkInstagram(username: string): Promise<{ username: stri
       return { username, available: false, rateLimited: true };
     }
 
+    // 404 means available. 200 means taken. 
+    // 400/302/301 are signs of bot detection or IP flags.
     const available = response.status === 404;
-    const statusIcon = available ? '✅' : '❌';
+    const isError = (response.status >= 400 && response.status !== 404) || (response.status >= 300 && response.status < 400);
+    
+    const statusIcon = available ? '✅' : (isError ? '⚠️' : '❌');
     console.log(`[${timestamp}] [CHECK] ${statusIcon} ${username} (HTTP ${response.status})`);
     
-    return { username, available };
+    return { username, available, rateLimited: isError };
   } catch (error: any) {
     console.error(`[${new Date().toISOString()}] [CHECK] Error checking ${username}:`, error.message);
     return { username, available: false };

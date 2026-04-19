@@ -113,96 +113,156 @@ export interface CheckResult {
   unknown: boolean;
 }
 
+interface SessionContext {
+  token: string | null;
+  cookies: string | null;
+  count: number;
+  userAgent: string;
+}
+
+let currentSession: SessionContext | null = null;
+const SESSION_LIMIT = 25;
+
 /**
- * Checks if a username is likely available on Instagram.
- * Uses content validation as status codes alone can be misleading.
+ * Initializes or refreshes the Instagram session to get fresh CSRF tokens and cookies.
  */
-export async function checkInstagram(username: string): Promise<CheckResult> {
+async function refreshSession(): Promise<boolean> {
   const userAgents = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0',
-    'Mozilla/5.0 (AppleChromebook) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.6167.160 Safari/537.36',
-    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1',
-    'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.119 Mobile Safari/537.36'
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1'
   ];
+  
+  const ua = userAgents[Math.floor(Math.random() * userAgents.length)];
+  const timestamp = new Date().toISOString();
+  
+  try {
+    console.log(`[${timestamp}] [SESSION] 🔄 Refreshing Instagram session...`);
+    const response = await fetch('https://www.instagram.com/accounts/emailsignup/', {
+      method: 'GET',
+      headers: {
+        'User-Agent': ua,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      }
+    });
 
+    const setCookie = response.headers.get('set-cookie');
+    if (!setCookie) return false;
+
+    // Extract CSRF token from cookies
+    const tokenMatch = setCookie.match(/csrftoken=([^;]+)/);
+    const token = tokenMatch ? tokenMatch[1] : null;
+
+    currentSession = {
+      token,
+      cookies: setCookie,
+      count: 0,
+      userAgent: ua
+    };
+
+    console.log(`[${timestamp}] [SESSION] ✅ Session established. Token: ${token ? 'Found' : 'Missing'}`);
+    return true;
+  } catch (err: any) {
+    console.error(`[${timestamp}] [SESSION] 💥 Refresh failed:`, err.message);
+    return false;
+  }
+}
+
+/**
+ * Checks if a username is available using the official signup validation endpoint.
+ */
+export async function checkInstagram(username: string): Promise<CheckResult> {
   const backoffs = [5000, 15000, 30000];
   let attempt = 0;
 
   while (attempt <= backoffs.length) {
-    const randomUA = userAgents[Math.floor(Math.random() * userAgents.length)];
+    // Refresh session if needed
+    if (!currentSession || currentSession.count >= SESSION_LIMIT || !currentSession.token) {
+      const success = await refreshSession();
+      if (!success) {
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        attempt++;
+        continue;
+      }
+    }
+
+    const { token, cookies, userAgent } = currentSession!;
     const timestamp = new Date().toISOString();
 
     try {
-      // Random jitter before starting an attempt
+      // Small jitter
       await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
 
-      const url = `https://www.instagram.com/${username}/`;
-      const response = await fetch(url, {
-        method: 'GET',
+      const response = await fetch('https://www.instagram.com/api/v1/web/accounts/web_create_ajax/attempt/', {
+        method: 'POST',
         headers: {
-          'User-Agent': randomUA,
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+          'User-Agent': userAgent,
+          'Accept': '*/*',
           'Accept-Language': 'en-US,en;q=0.9',
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache',
-          'Sec-Fetch-Dest': 'document',
-          'Sec-Fetch-Mode': 'navigate',
-          'Sec-Fetch-Site': 'none',
-          'Sec-Fetch-User': '?1',
-          'Upgrade-Insecure-Requests': '1',
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'X-CSRFToken': token || '',
+          'X-Instagram-AJAX': '1',
+          'X-Requested-With': 'XMLHttpRequest',
+          'Referer': 'https://www.instagram.com/accounts/emailsignup/',
+          'Cookie': cookies || '',
         },
+        body: new URLSearchParams({
+          username: username,
+          email: `${Math.random().toString(36).substring(7)}@gmail.com`,
+          password: `pass_${Math.random().toString(36).substring(7)}`,
+          first_name: 'User',
+          opt_into_hashtags: 'false'
+        }).toString()
       });
 
+      currentSession!.count++;
+
       if (response.status === 429) {
-        console.log(`[${timestamp}] [CHECK] ⚠️  ${username} -> RATE LIMITED (429)`);
+        console.log(`[${timestamp}] [API] ⚠️  ${username} -> RATE LIMITED (429)`);
         return { username, available: false, rateLimited: true, unknown: true };
       }
 
       if (response.status === 400 || (response.status >= 300 && response.status < 400)) {
         if (attempt < backoffs.length) {
           const wait = backoffs[attempt];
-          console.log(`[${timestamp}] [CHECK] ⚠️  ${username} -> HTTP ${response.status}. Retrying in ${wait / 1000}s... (Attempt ${attempt + 1})`);
+          console.log(`[${timestamp}] [API] ⚠️  ${username} -> HTTP ${response.status}. Backing off ${wait/1000}s... (Attempt ${attempt+1})`);
           await new Promise(resolve => setTimeout(resolve, wait));
           attempt++;
+          // Force session refresh on error
+          currentSession = null;
           continue;
         } else {
-          console.log(`[${timestamp}] [CHECK] ⚠️  ${username} -> Repeated HTTP ${response.status}. Treatment as block.`);
+          console.log(`[${timestamp}] [API] ⚠️  ${username} -> Critical Error ${response.status}. Scaling down.`);
           return { username, available: false, rateLimited: true, unknown: true };
         }
       }
 
-      const body = await response.text();
+      const data = await response.json();
       
-      // Content Validation Logic
-      const isNotFoundMsg = body.includes("Sorry, this page isn't available") || body.includes("Page Not Found");
-      const hasProfileMeta = body.includes("profilePage_") || body.includes("username") || body.includes("\"biography\"");
-      
-      const available = isNotFoundMsg || response.status === 404;
-      const taken = hasProfileMeta || response.status === 200;
-
-      if (available && !taken) {
-        console.log(`[${timestamp}] [CHECK] ✅ ${username} (Detected as AVAILABLE via Content)`);
-        return { username, available: true, rateLimited: false, unknown: false };
+      // Official Decision Logic
+      if (data.status === 'ok') {
+        const taken = data.errors?.username ? true : false;
+        
+        if (taken) {
+          console.log(`[${timestamp}] [API] ❌ ${username} is TAKEN (Confirmed by API)`);
+          return { username, available: false, rateLimited: false, unknown: false };
+        } else {
+          console.log(`[${timestamp}] [API] ✅ ${username} is AVAILABLE (Confirmed by API)`);
+          return { username, available: true, rateLimited: false, unknown: false };
+        }
       }
 
-      if (taken) {
-        console.log(`[${timestamp}] [CHECK] ❌ ${username} (Detected as TAKEN via Content)`);
-        return { username, available: false, rateLimited: false, unknown: false };
-      }
-
-      // If ambiguous
-      console.log(`[${timestamp}] [CHECK] ❓ ${username} -> Ambiguous response. Treating as unknown.`);
+      console.warn(`[${timestamp}] [API] ❓ ${username} -> Unexpected JSON:`, JSON.stringify(data));
       return { username, available: false, rateLimited: false, unknown: true };
 
     } catch (error: any) {
-      console.error(`[${timestamp}] [CHECK] 💥 Error checking ${username}:`, error.message);
+      console.error(`[${timestamp}] [API] 💥 Check Error:`, error.message);
       if (attempt < backoffs.length) {
-        const wait = backoffs[attempt];
-        await new Promise(resolve => setTimeout(resolve, wait));
+        await new Promise(resolve => setTimeout(resolve, backoffs[attempt]));
         attempt++;
+        currentSession = null;
         continue;
       }
       return { username, available: false, rateLimited: false, unknown: true };
